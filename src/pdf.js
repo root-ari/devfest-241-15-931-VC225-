@@ -15,6 +15,11 @@ export async function validatePdf(bytes) {
   return pages;
 }
 
+// Count pages of an in-memory PDF (for the success message).
+export async function countPages(bytes) {
+  return validatePdf(bytes.slice ? bytes.slice() : bytes);
+}
+
 // items: [{ req, bytes, fileName, expiry }] in final order.
 // Produces one PDF: cover page + each document's pages in order.
 export async function buildPackagePdf(tender, items) {

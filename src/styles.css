@@ -1,5 +1,5 @@
 * { box-sizing: border-box; }
-body { margin: 0; font-family: "Segoe UI", "Noto Sans Bengali", "Hind Siliguri", Arial, sans-serif; background: #f1f4f9; color: #1c2733; }
+body { margin: 0; font-family: "Noto Sans Bengali", "Segoe UI", "Hind Siliguri", "SolaimanLipi", "Kalpurush", Arial, sans-serif; background: #f1f4f9; color: #1c2733; }
 .wrap { max-width: 960px; margin: 0 auto; padding: 16px; }
 header.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; background: #0b3d62; color: #fff; border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
 header.top h1 { margin: 0 0 4px; font-size: 22px; }

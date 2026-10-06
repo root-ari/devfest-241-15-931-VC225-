@@ -4,8 +4,8 @@ import {
   getPackageSummary, buildFilename, getDisplayTitle, suggestMatch,
   findDuplicateGroups, sha256Hex,
 } from './logic.js';
-import { STR } from './i18n.js';
-import { validatePdf, buildPackagePdf, downloadBytes } from './pdf.js';
+import { STR, useLang, msgFor, fill, limitMsg } from './i18n.js';
+import { validatePdf, countPages, buildPackagePdf, downloadBytes } from './pdf.js';
 
 let fileSeq = 0;
 
@@ -16,13 +16,14 @@ function hasPdfMagic(u8) {
 }
 
 export default function App() {
-  const [lang, setLang] = useState('en');
+  const [lang, setLang] = useLang();
   const [tender, setTender] = useState(null);
   const [requirements, setRequirements] = useState([]);
   const [files, setFiles] = useState([]); // {id,name,size,bytes,pages,hash}
   const [matches, setMatches] = useState({}); // reqId -> {fileId, expiry}
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [success, setSuccess] = useState('');
   const [building, setBuilding] = useState(false);
   const [dragJson, setDragJson] = useState(false);
   const [dragPdf, setDragPdf] = useState(false);
@@ -63,13 +64,14 @@ export default function App() {
     setMatches({});
     setError('');
     setNotice('');
+    setSuccess('');
   }
 
   async function loadJsonBlob(blob) {
     try {
       resetForTender(parseRequirements(await blob.text()));
     } catch (err) {
-      setError(t.errors[err.message] || err.message);
+      setError(msgFor(lang, err));
     }
   }
 
@@ -85,7 +87,7 @@ export default function App() {
       const res = await fetch('sample-requirements.json');
       resetForTender(parseRequirements(await res.text()));
     } catch (err) {
-      setError(t.errors[err.message] || String(err.message || err));
+      setError(msgFor(lang, err));
     }
   }
 
@@ -95,7 +97,7 @@ export default function App() {
     setNotice('');
     const check = checkUploadLimits(files.length, totalBytes, picked);
     if (!check.ok) {
-      setError(check.reason === 'NOT_PDF' ? `${t.errors.NOT_PDF} (${check.fileName})` : (t.errors[check.reason] || check.reason));
+      setError(limitMsg(lang, check));
       return;
     }
     setError('');
@@ -103,7 +105,7 @@ export default function App() {
     for (const f of picked) {
       const buf = new Uint8Array(await f.arrayBuffer());
       if (!hasPdfMagic(buf)) {
-        setError(`${f.name} ${t.notPdfMagic}`);
+        setError(fill(t.fileNotPdf, { file: f.name }));
         continue;
       }
       try {
@@ -111,7 +113,7 @@ export default function App() {
         const hash = await sha256Hex(buf.slice());
         added.push({ id: 'F' + (++fileSeq), name: f.name, size: f.size, bytes: buf, pages, hash });
       } catch {
-        setError(`${t.errors.BAD_PDF} (${f.name})`);
+        setError(fill(t.badPdfNamed, { file: f.name }));
       }
     }
     if (!added.length) return;
@@ -152,7 +154,7 @@ export default function App() {
         if (k !== reqId && m && m.fileId && m.fileId !== fileId) {
           const other = files.find((f) => f.id === m.fileId);
           if (candHash && other && other.hash === candHash) {
-            setNotice(`${t.dupBlocked} (${cand.name} = ${other.name})`);
+            setNotice(fill(t.dupBlockedNamed, { a: cand.name, b: other.name }));
             return;
           }
         }
@@ -181,6 +183,7 @@ export default function App() {
     if (!summary || !summary.canDownload || building) return;
     setBuilding(true);
     setError('');
+    setSuccess('');
     try {
       const items = [];
       for (const it of summary.items) {
@@ -188,9 +191,12 @@ export default function App() {
         if (m && m.fileId) items.push({ req: it.req, bytes: fileById[m.fileId].bytes, expiry: m.expiry || '' });
       }
       const out = await buildPackagePdf(tender, items);
-      downloadBytes(out, buildFilename(tender.tender_id));
-    } catch {
-      setError(t.errors.BAD_PDF);
+      const fname = buildFilename(tender.tender_id);
+      downloadBytes(out, fname);
+      const npages = await countPages(out);
+      setSuccess(fill(t.successMsg, { file: fname, pages: npages }));
+    } catch (err) {
+      setError(msgFor(lang, err));
     } finally {
       setBuilding(false);
     }
@@ -211,9 +217,9 @@ export default function App() {
           <h1>{t.appTitle}</h1>
           <p>{t.appSub}</p>
         </div>
-        <div className="langswitch">
-          <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>EN</button>
-          <button className={lang === 'bn' ? 'active' : ''} onClick={() => setLang('bn')}>বাংলা</button>
+        <div className="langswitch" title={t.langTitle} aria-label={t.langTitle}>
+          <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')} title={t.switchToEn} aria-label={t.switchToEn}>EN</button>
+          <button className={lang === 'bn' ? 'active' : ''} onClick={() => setLang('bn')} title={t.switchToBn} aria-label={t.switchToBn}>বাংলা</button>
         </div>
       </header>
 
@@ -229,8 +235,8 @@ export default function App() {
         >
           <h2>{t.loadJson}</h2>
           <p className="help">{t.loadJsonHelp} {t.dropJson}</p>
-          <button className="btn" onClick={() => jsonRef.current.click()}>{t.chooseJson}</button>
-          <button className="btn secondary" onClick={onTryDemo}>{t.tryDemo}</button>
+          <button className="btn" onClick={() => jsonRef.current.click()} title={t.chooseJson}>{t.chooseJson}</button>
+          <button className="btn secondary" onClick={onTryDemo} title={t.tryDemo}>{t.tryDemo}</button>
           <input ref={jsonRef} type="file" accept="application/json,.json" hidden onChange={onJsonFile} />
           {tender && (
             <div className="tenderbox">
@@ -256,7 +262,7 @@ export default function App() {
         >
           <h2>{t.upload}</h2>
           <p className="help">{t.uploadHelp} ({files.length}/30, {formatBytes(totalBytes)}/50 MB) {t.dropPdfs}</p>
-          <button className="btn" disabled={!tender} onClick={() => pdfRef.current.click()}>{t.choosePdfs}</button>
+          <button className="btn" disabled={!tender} onClick={() => pdfRef.current.click()} title={t.choosePdfs}>{t.choosePdfs}</button>
           <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={onPdfFiles} />
           {!tender && <p className="note">{t.loadJson}</p>}
           {tender && files.length === 0 && <p className="note">{t.noFiles}</p>}
@@ -270,7 +276,7 @@ export default function App() {
                       <span className="dupbadge"> {t.duplicateOf} {dupOfName[f.id]}</span>
                     )}
                   </span>
-                  <button className="linkbtn" onClick={() => removeFile(f.id)}>{t.remove}</button>
+                  <button className="linkbtn" onClick={() => removeFile(f.id)} title={t.removeTitle} aria-label={`${t.removeTitle}: ${f.name}`}>{t.remove}</button>
                 </li>
               ))}
             </ul>
@@ -317,7 +323,7 @@ export default function App() {
                     ))}
                   </select>
                   {m.fileId !== '' && (
-                    <button className="linkbtn" onClick={() => clearMatch(req.id)}>{t.clear}</button>
+                    <button className="linkbtn" onClick={() => clearMatch(req.id)} title={t.clearTitle} aria-label={t.clearTitle}>{t.clear}</button>
                   )}
                   {req.has_expiry && m.fileId !== '' && (
                     <label>{t.expiry}: <input type="date" value={m.expiry} onChange={(e) => setMatch(req.id, { expiry: e.target.value })} /></label>
@@ -339,9 +345,10 @@ export default function App() {
           </div>
           {summary.canDownload && <div className="msg good">{t.okMsg}</div>}
           {!summary.canDownload && <div className="msg bad">{t.blockedMsg}</div>}
-          <button className="btn big" disabled={!summary.canDownload || building} onClick={onDownload}>
+          <button className="btn big" disabled={!summary.canDownload || building} onClick={onDownload} title={summary.canDownload ? t.generate : t.blockedMsg}>
             {building ? t.building : t.download}
           </button>
+          {success && <div className="msg good">{success}</div>}
           <p className="note">{t.coverNote}</p>
           <p className="note">{t.fileName}: <b>{buildFilename(tender.tender_id)}</b></p>
           {unmatched.length > 0 && (
@@ -350,7 +357,7 @@ export default function App() {
         </section>
       )}
 
-      <footer>100% in-browser — files never leave this computer. / ১০০% ব্রাউজারেই — ফাইল এই কম্পিউটার ছাড়ে না।</footer>
+      <footer>{t.footer}</footer>
     </div>
   );
 }
