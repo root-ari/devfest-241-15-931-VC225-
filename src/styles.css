@@ -29,6 +29,17 @@ header.top p { margin: 0; opacity: 0.85; font-size: 14px; }
 .badge.mand { background: #fdecea; color: #a93226; }
 .badge.opt { background: #eef1f5; color: #5d6d7e; }
 .req .row2 { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.card.drop.over { outline: 3px dashed #0b3d62; outline-offset: -6px; background: #f4f8fd; }
+.reqlist-title { margin-top: 10px; font-weight: 700; }
+.reqlist { margin: 6px 0 0; padding-left: 22px; font-size: 14px; }
+.dupbadge { background: #fdebd0; color: #935116; border-radius: 10px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+.pill { font-size: 12px; border-radius: 12px; padding: 2px 10px; white-space: nowrap; font-weight: 700; }
+.pill.mand { background: #f9d7d3; color: #922b21; }
+.pill.opt { background: #e8ecf1; color: #5d6d7e; }
+.blockerlist { margin: 8px 0 4px; padding-left: 20px; }
+.blocker-sub { font-size: 13px; opacity: 0.8; }
+@media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
 .req select, .req input[type="date"] { font-size: 15px; padding: 9px 10px; border-radius: 8px; border: 1px solid #b9c4d2; max-width: 100%; }
 .req label { font-size: 14px; }
 .chip { display: inline-block; font-size: 13px; font-weight: 700; border-radius: 12px; padding: 3px 12px; margin-top: 10px; }
