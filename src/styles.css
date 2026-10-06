@@ -58,6 +58,16 @@ header.top p { margin: 0; opacity: 0.88; font-size: 14px; }
 .spinner { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid rgba(11,61,98,0.25); border-top-color: var(--blue); animation: spin 0.8s linear infinite; vertical-align: -3px; }
 .spinner.light { border-color: rgba(255,255,255,0.35); border-top-color: #fff; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.btn.small { font-size: 14px; padding: 8px 16px; margin: 0; }
+.btn.tiny { font-size: 13px; padding: 5px 14px; margin: 0; box-shadow: none; }
+.automatch-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0 4px; }
+.msg.sug { background: var(--blue-soft); border-left-color: var(--blue); color: var(--blue-dark); }
+.suglist { list-style: none; padding: 0; margin: 10px 0 4px; }
+.suglist li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; background: #fff; border: 1px solid var(--line); border-radius: 9px; margin-bottom: 6px; font-size: 14px; }
+.sugtext { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.sugtext code { background: var(--grey-bg); padding: 2px 7px; border-radius: 6px; font-size: 13px; word-break: break-all; }
+.sugpct { font-size: 12px; font-weight: 700; color: var(--green); background: var(--green-bg); border-radius: 999px; padding: 2px 9px; }
+.sugactions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .tenderbox { background: var(--blue-soft); border-radius: 10px; padding: 12px 16px; margin-top: 14px; font-size: 15px; border-left: 4px solid var(--blue); }
 .reqlist-title { margin-top: 10px; font-weight: 700; }
 .reqlist { margin: 6px 0 0; padding-left: 22px; font-size: 14px; }

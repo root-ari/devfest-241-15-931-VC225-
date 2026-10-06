@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import {
   parseRequirements, checkUploadLimits, formatBytes,
-  getPackageSummary, buildFilename, getDisplayTitle, suggestMatch,
+  getPackageSummary, buildFilename, getDisplayTitle, autoMatchAll,
   findDuplicateGroups, sha256Hex,
 } from './logic.js';
 import { STR, useLang, msgFor, fill, limitMsg } from './i18n.js';
@@ -29,6 +29,8 @@ export default function App() {
   const [hashing, setHashing] = useState(false);
   const [dragJson, setDragJson] = useState(false);
   const [dragPdf, setDragPdf] = useState(false);
+  const [suggestions, setSuggestions] = useState([]); // {fileId, reqId, score}
+  const [autoRan, setAutoRan] = useState(false);
   const jsonRef = useRef(null);
   const pdfRef = useRef(null);
   const t = STR[lang];
@@ -58,6 +60,15 @@ export default function App() {
     }
     return out;
   }, [files, dupMap]);
+  // Drop suggestions that became stale (file removed/matched, or req matched).
+  const visibleSuggestions = useMemo(
+    () => suggestions.filter((s) => {
+      const req = requirements.find((r) => r.id === s.reqId);
+      const m = matches[s.reqId];
+      return !!req && !!fileById[s.fileId] && !(m && m.fileId);
+    }),
+    [suggestions, requirements, matches, fileById]
+  );
 
   function resetForTender(parsed) {
     setTender(parsed.tender);
@@ -65,6 +76,8 @@ export default function App() {
     setFiles([]);
     setBadFiles([]);
     setMatches({});
+    setSuggestions([]);
+    setAutoRan(false);
     setError('');
     setNotice('');
     setSuccess('');
@@ -140,14 +153,12 @@ export default function App() {
       if (rejected.length && !added.length) return;
       if (!added.length) return;
       setFiles((prev) => [...prev, ...added]);
-      setMatches((prev) => {
-        const next = { ...prev };
-        for (const a of added) {
-          const sug = suggestMatch(a.name, requirements);
-          if (sug && !(next[sug] && next[sug].fileId)) next[sug] = { fileId: a.id, expiry: '' };
-        }
-        return next;
-      });
+      // Queue fuzzy suggestions for the user to confirm (Bonus A).
+      const takenReq = requirements
+        .filter((r) => matches[r.id] && matches[r.id].fileId)
+        .map((r) => r.id);
+      const picks = autoMatchAll(added, requirements, takenReq);
+      if (picks.length) setSuggestions((prev) => [...prev, ...picks]);
     } finally {
       setHashing(false);
     }
@@ -161,6 +172,7 @@ export default function App() {
 
   function removeFile(id) {
     setFiles((prev) => prev.filter((f) => f.id !== id));
+    setSuggestions((prev) => prev.filter((s) => s.fileId !== id));
     setMatches((prev) => {
       const next = {};
       for (const [k, m] of Object.entries(prev)) {
@@ -180,7 +192,7 @@ export default function App() {
           const other = files.find((f) => f.id === m.fileId);
           if (candHash && other && other.hash === candHash) {
             setNotice(fill(t.dupBlockedNamed, { a: cand.name, b: other.name }));
-            return;
+            return false; // rejected — keep any pending suggestion
           }
         }
       }
@@ -193,6 +205,7 @@ export default function App() {
       next[reqId] = { fileId: fileId || '', expiry: (next[reqId] && next[reqId].expiry) || '' };
       return next;
     });
+    return true;
   }
 
   function clearMatch(reqId) {
@@ -202,6 +215,26 @@ export default function App() {
 
   function setMatch(reqId, patch) {
     setMatches((prev) => ({ ...prev, [reqId]: { fileId: '', expiry: '', ...(prev[reqId] || {}), ...patch } }));
+  }
+
+  // ---- Bonus A: fuzzy auto-match — suggestions the user confirms ----
+  function acceptSuggestion(s) {
+    const ok = pickFile(s.reqId, s.fileId); // pickFile enforces dup-hash guard
+    if (!ok) return; // rejection shows a notice; keep the suggestion
+    setSuggestions((prev) => prev.filter((x) => x !== s && x.reqId !== s.reqId && x.fileId !== s.fileId));
+  }
+  function dismissSuggestion(s) {
+    setSuggestions((prev) => prev.filter((x) => x !== s));
+  }
+  function runAutoMatch() {
+    setNotice('');
+    const takenReq = requirements
+      .filter((r) => matches[r.id] && matches[r.id].fileId)
+      .map((r) => r.id);
+    const free = files.filter((f) => !usedFileIds.has(f.id));
+    const picks = autoMatchAll(free, requirements, takenReq);
+    setSuggestions(picks);
+    setAutoRan(true);
   }
 
   async function onDownload() {
@@ -353,6 +386,41 @@ export default function App() {
         <section className="card">
           <h2><span className="cardnum">3</span> {t.match}</h2>
           <p className="help">{t.matchHelp}</p>
+          {files.length > 0 && requirements.length > 0 && (
+            <div className="automatch-bar">
+              <button className="btn small" onClick={runAutoMatch} disabled={usedFileIds.size >= files.length}>
+                {t.autoMatch}
+              </button>
+              <span className="note">{t.autoMatchHelp}</span>
+            </div>
+          )}
+          {visibleSuggestions.length > 0 && (
+            <div className="msg sug">
+              <b>{t.suggestions} ({visibleSuggestions.length})</b>
+              <ul className="suglist">
+                {visibleSuggestions.map((s) => {
+                  const f = fileById[s.fileId];
+                  const req = requirements.find((r) => r.id === s.reqId);
+                  if (!f || !req) return null;
+                  return (
+                    <li key={s.fileId + '|' + s.reqId}>
+                      <span className="sugtext">
+                        <code>{f.name}</code> → {getDisplayTitle(req, lang)}
+                        <span className="sugpct">{Math.round(s.score * 100)}%</span>
+                      </span>
+                      <span className="sugactions">
+                        <button className="btn tiny" onClick={() => acceptSuggestion(s)}>{t.confirm}</button>
+                        <button className="linkbtn" onClick={() => dismissSuggestion(s)}>{t.dismiss}</button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {autoRan && visibleSuggestions.length === 0 && (
+            <div className="msg good">{t.noSuggestions}</div>
+          )}
           {blockers.length > 0 && (
             <div className="msg bad">
               <b>{blockers.length} {t.summaryBar}</b>

@@ -2,6 +2,7 @@
 import {
   parseRequirements, computeStatus, isBlocking, getBlockers,
   findDuplicateGroups, sha256Hex,
+  scoreAutoMatch, suggestMatch, autoMatchAll,
 } from '../src/logic.js';
 
 let pass = 0, fail = 0;
@@ -77,6 +78,45 @@ throwsKey('parse bad json', () => parseRequirements('{nope'), 'INVALID_JSON');
 // sha256Hex: known vector for "abc".
 const h = await sha256Hex(new TextEncoder().encode('abc').buffer);
 eq('sha256 abc', h, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+// ---- auto-match (Bonus A) ----
+const REQS = [
+  { id: 'R01', order: 1, title_en: 'Trade License', title_bn: 'ট', mandatory: true, has_expiry: true },
+  { id: 'R02', order: 2, title_en: 'TIN Certificate', title_bn: 'ট', mandatory: true, has_expiry: false },
+  { id: 'R03', order: 3, title_en: 'VAT Registration Certificate', title_bn: 'ভ', mandatory: true, has_expiry: false },
+  { id: 'R04', order: 4, title_en: 'Bank Solvency Certificate', title_bn: 'ব', mandatory: true, has_expiry: true },
+  { id: 'R08', order: 8, title_en: 'Technical Proposal', title_bn: 'ক', mandatory: true, has_expiry: false },
+  { id: 'R09', order: 9, title_en: 'Financial Proposal', title_bn: 'আ', mandatory: true, has_expiry: false },
+];
+eq('fuzzy trade_license.pdf -> R01', suggestMatch('trade_license.pdf', REQS).reqId, 'R01');
+eq('fuzzy Trade-License-2026.PDF -> R01', suggestMatch('Trade-License-2026.PDF', REQS).reqId, 'R01');
+eq('fuzzy tin_certificate.pdf -> R02', suggestMatch('tin_certificate.pdf', REQS).reqId, 'R02');
+eq('fuzzy bank_solvency.pdf -> R04', suggestMatch('bank_solvency.pdf', REQS).reqId, 'R04');
+eq('fuzzy 01_financial_proposal.pdf -> R09', suggestMatch('01_financial_proposal.pdf', REQS).reqId, 'R09');
+eq('fuzzy 02_technical_proposal.pdf -> R08', suggestMatch('02_technical_proposal.pdf', REQS).reqId, 'R08');
+eq('fuzzy unrelated -> null', suggestMatch('company_logo.png', REQS), null);
+eq('fuzzy empty -> null', suggestMatch('', REQS), null);
+// Similar titles compete: financial beats technical for "financial".
+const sFin = scoreAutoMatch('financial.pdf', REQS[5]);
+const sTech = scoreAutoMatch('financial.pdf', REQS[4]);
+eq('financial.pdf prefers Financial Proposal', sFin > sTech, true);
+// Requirement id in filename wins outright.
+eq('id match wins', suggestMatch('R04-whatever.pdf', REQS).reqId, 'R04');
+// autoMatchAll: one file <-> one requirement, best-score pairing.
+const picks = autoMatchAll(
+  [
+    { id: 'F1', name: 'trade_license_2026.pdf' },
+    { id: 'F2', name: 'trade_license_2025.pdf' },
+    { id: 'F3', name: 'tin_certificate.pdf' },
+  ],
+  REQS, []
+);
+eq('autoMatchAll count', picks.length, 2);
+eq('autoMatchAll R01 taken once', picks.filter((p) => p.reqId === 'R01').length, 1);
+eq('autoMatchAll tin matched', picks.some((p) => p.fileId === 'F3' && p.reqId === 'R02'), true);
+// Taken requirements are skipped.
+const picks2 = autoMatchAll([{ id: 'F1', name: 'trade_license.pdf' }], REQS, ['R01']);
+eq('autoMatchAll skips taken', picks2.length, 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

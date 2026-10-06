@@ -192,18 +192,146 @@ export function buildFilename(tenderId) {
   return String(tenderId).trim().replace(/[\\/:*?"<>|]/g, '-') + '_Package.pdf';
 }
 
-// Suggest a requirement for an uploaded filename (keyword overlap on title_en).
-// Returns requirement id or null. Staff can always change it.
-export function suggestMatch(fileName, requirements) {
-  const words = String(fileName).toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter((w) => w.length > 2);
-  if (!words.length) return null;
+// ---- auto-match (fuzzy filename <-> requirement) ---------------------------
+// Pure, deterministic, dependency-free.
+
+/** Split into lowercase alphanumeric tokens, dropping 1-letter noise. */
+export function tokensOf(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((w) => w.length > 1);
+}
+
+// Light stemming so "license/licensed/licences", "proposal/proposals",
+// "certificate/certificates", "authorization/authorizations" line up.
+function stem(w) {
+  if (w.length > 4 && w.endsWith('ies')) return w.slice(0, -3) + 'y';
+  if (w.length > 4 && w.endsWith('ses')) return w.slice(0, -2);
+  if (w.length > 4 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+  return w;
+}
+
+const STOP = new Set([
+  'the', 'of', 'and', 'for', 'a', 'an', 'certificate', 'cert',
+  'copy', 'scan', 'scanned', 'final', 'new', 'updated', 'page', 'doc', 'document',
+]);
+
+function sigTokens(words) {
+  const out = [];
+  for (const w of words) {
+    const s = stem(w);
+    if (!STOP.has(s) && !STOP.has(w)) out.push(s);
+  }
+  return [...new Set(out)];
+}
+
+function initials(words) {
+  return words.map((w) => w[0]).join('');
+}
+
+/**
+ * Fuzzy score 0..1 between a file name and a requirement.
+ * Signals: requirement id (exact/partial), exact token overlap, acronym match
+ * (e.g. "tin" for TIN Certificate), substring/prefix overlap for truncated
+ * names ("vat_cert" vs VAT Registration Certificate).
+ */
+export function scoreAutoMatch(fileName, requirement) {
+  const base = String(fileName || '').replace(/\.[a-z0-9]+$/i, '');
+  const fw = tokensOf(base);
+  if (!fw.length) return 0;
+  const fs = new Set(sigTokens(fw));
+
+  const id = String(requirement.id || '').toLowerCase();
+  // Requirement id like "R01" or "trade-license" appearing in the filename.
+  if (id) {
+    const flat = base.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (flat.includes(id.replace(/[^a-z0-9]+/g, ''))) return 1;
+  }
+
+  const title = tokensOf(requirement.title_en);
+  const ts = sigTokens(title);
+  if (!ts.length) return 0;
+
+  let hit = 0;
+  let weight = 0;
+  for (const tw of ts) {
+    const w = tw.length >= 6 ? 2 : 1; // long words matter more
+    weight += w;
+    if (fs.has(tw)) { hit += w; continue; }
+    // prefix/substring either way, min 3 chars ("trad" ~ "trade")
+    let partial = false;
+    for (const f of fs) {
+      if (f.length >= 3 && tw.length >= 3 && (f.startsWith(tw.slice(0, 4)) || tw.startsWith(f.slice(0, 4)) || f.includes(tw) || tw.includes(f))) {
+        partial = true;
+        break;
+      }
+    }
+    if (partial) hit += w * 0.6;
+  }
+  let score = weight ? hit / weight : 0;
+
+  // Acronym bonus: a filename token equal to a title initialism ("tin" for T-I-N).
+  const init = initials(title.filter((w) => !STOP.has(w) && !STOP.has(stem(w))));
+  if (init.length > 1 && fs.has(init)) score = Math.min(1, score + 0.5);
+
+  // Coverage: what fraction of the filename's own words got used.
+  let used = 0;
+  for (const f of fs) {
+    if (ts.includes(f) || ts.some((tw) => f.length >= 4 && (tw.startsWith(f.slice(0, 4)) || f.startsWith(tw.slice(0, 4))))) used++;
+  }
+  const coverage = fs.size ? used / fs.size : 0;
+  score = score * 0.7 + coverage * 0.3;
+
+  // Penalize matches that only hit one generic word of a long title.
+  if (hit <= 1 && ts.length >= 3) score *= 0.6;
+  return Math.max(0, Math.min(1, score));
+}
+
+/**
+ * Best requirement for one filename. Returns { reqId, score } or null when
+ * nothing passes `minScore` (default 0.35).
+ */
+export function suggestMatch(fileName, requirements, minScore = 0.35) {
   let best = null;
   let bestScore = 0;
-  for (const r of requirements) {
-    const title = String(r.title_en).toLowerCase();
-    let score = 0;
-    for (const w of words) if (title.includes(w)) score += w.length;
-    if (score > bestScore) { bestScore = score; best = r.id; }
+  for (const r of requirements || []) {
+    const s = scoreAutoMatch(fileName, r);
+    if (s > bestScore) { bestScore = s; best = r; }
   }
-  return bestScore > 0 ? best : null;
+  if (!best || bestScore < minScore) return null;
+  return { reqId: best.id, score: Math.round(bestScore * 100) / 100 };
+}
+
+/**
+ * Suggest matches for many files at once. Each file gets its best free
+ * requirement; each requirement is used at most once (greedy by score).
+ * @param {Array<{id:string,name:string}>} files — only unmatched files
+ * @param {Array} requirements — full list
+ * @param {Set|Array} takenReqIds — requirement ids already matched
+ * @param {number} minScore
+ * @returns {Array<{fileId:string, reqId:string, score:number}>} sorted by score desc
+ */
+export function autoMatchAll(files, requirements, takenReqIds, minScore = 0.35) {
+  const taken = new Set(takenReqIds || []);
+  const cands = [];
+  for (const f of files || []) {
+    for (const r of requirements || []) {
+      if (taken.has(r.id)) continue;
+      const s = scoreAutoMatch(f.name, r);
+      if (s >= minScore) cands.push({ fileId: f.id, fileName: f.name, reqId: r.id, score: s });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score || String(a.fileId).localeCompare(String(b.fileId)));
+  const usedFiles = new Set();
+  const usedReqs = new Set(taken);
+  const picks = [];
+  for (const c of cands) {
+    if (usedFiles.has(c.fileId) || usedReqs.has(c.reqId)) continue;
+    usedFiles.add(c.fileId);
+    usedReqs.add(c.reqId);
+    picks.push({ fileId: c.fileId, reqId: c.reqId, score: Math.round(c.score * 100) / 100 });
+  }
+  return picks.sort((a, b) => b.score - a.score);
 }
