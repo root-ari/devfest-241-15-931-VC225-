@@ -19,12 +19,14 @@ export default function App() {
   const [lang, setLang] = useLang();
   const [tender, setTender] = useState(null);
   const [requirements, setRequirements] = useState([]);
-  const [files, setFiles] = useState([]); // {id,name,size,bytes,pages,hash}
+  const [files, setFiles] = useState([]); // {id,name,size,bytes,pages,hash} — usable only
+  const [badFiles, setBadFiles] = useState([]); // {name, kind} — rejected, never matchable
   const [matches, setMatches] = useState({}); // reqId -> {fileId, expiry}
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [success, setSuccess] = useState('');
   const [building, setBuilding] = useState(false);
+  const [hashing, setHashing] = useState(false);
   const [dragJson, setDragJson] = useState(false);
   const [dragPdf, setDragPdf] = useState(false);
   const jsonRef = useRef(null);
@@ -61,6 +63,7 @@ export default function App() {
     setTender(parsed.tender);
     setRequirements(parsed.requirements);
     setFiles([]);
+    setBadFiles([]);
     setMatches({});
     setError('');
     setNotice('');
@@ -101,31 +104,53 @@ export default function App() {
       return;
     }
     setError('');
-    const added = [];
-    for (const f of picked) {
-      const buf = new Uint8Array(await f.arrayBuffer());
-      if (!hasPdfMagic(buf)) {
-        setError(fill(t.fileNotPdf, { file: f.name }));
-        continue;
+    setHashing(true);
+    try {
+      const added = [];
+      const rejected = [];
+      for (const f of picked) {
+        let buf;
+        try {
+          buf = new Uint8Array(await f.arrayBuffer());
+        } catch {
+          rejected.push({ name: f.name || t.unnamedFile, kind: 'damaged' });
+          continue;
+        }
+        if (!hasPdfMagic(buf)) {
+          rejected.push({ name: f.name, kind: 'notpdf' });
+          continue;
+        }
+        const v = await validatePdf(buf.slice());
+        if (!v.ok) {
+          rejected.push({ name: f.name, kind: v.reason }); // 'locked' | 'damaged'
+          continue;
+        }
+        let hash = '';
+        try {
+          hash = await sha256Hex(buf.slice());
+        } catch {
+          rejected.push({ name: f.name, kind: 'damaged' });
+          continue;
+        }
+        added.push({ id: 'F' + (++fileSeq), name: f.name, size: f.size, bytes: buf, pages: v.pages, hash });
       }
-      try {
-        const pages = await validatePdf(buf.slice());
-        const hash = await sha256Hex(buf.slice());
-        added.push({ id: 'F' + (++fileSeq), name: f.name, size: f.size, bytes: buf, pages, hash });
-      } catch {
-        setError(fill(t.badPdfNamed, { file: f.name }));
-      }
+      // Bad files are listed with a clear per-file error and never added,
+      // so they cannot be matched and the app never crashes.
+      setBadFiles((prev) => [...prev, ...rejected]);
+      if (rejected.length && !added.length) return;
+      if (!added.length) return;
+      setFiles((prev) => [...prev, ...added]);
+      setMatches((prev) => {
+        const next = { ...prev };
+        for (const a of added) {
+          const sug = suggestMatch(a.name, requirements);
+          if (sug && !(next[sug] && next[sug].fileId)) next[sug] = { fileId: a.id, expiry: '' };
+        }
+        return next;
+      });
+    } finally {
+      setHashing(false);
     }
-    if (!added.length) return;
-    setFiles((prev) => [...prev, ...added]);
-    setMatches((prev) => {
-      const next = { ...prev };
-      for (const a of added) {
-        const sug = suggestMatch(a.name, requirements);
-        if (sug && !(next[sug] && next[sug].fileId)) next[sug] = { fileId: a.id, expiry: '' };
-      }
-      return next;
-    });
   }
 
   async function onPdfFiles(e) {
@@ -202,6 +227,12 @@ export default function App() {
     }
   }
 
+  function badMsg(b) {
+    if (b.kind === 'locked') return t.lockedPdf;
+    if (b.kind === 'notpdf') return t.notRealPdf;
+    return t.damagedPdf;
+  }
+
   const unmatched = files.filter((f) => !usedFileIds.has(f.id));
   const blockers = tender
     ? summary.items.filter((i) => i.blocking).map((i) => ({
@@ -209,6 +240,9 @@ export default function App() {
         status: t.statuses[i.status],
       }))
     : [];
+  const pct = tender && requirements.length
+    ? Math.round((summary.okCount / requirements.length) * 100) : 0;
+  const stepDone = [!!tender, files.length > 0, summary && summary.okCount > 0, summary && summary.canDownload];
 
   return (
     <div className="wrap">
@@ -223,6 +257,24 @@ export default function App() {
         </div>
       </header>
 
+      <ol className="steps" aria-label={fill(t.stepOf, { n: tender ? (summary.canDownload ? 4 : files.length ? 3 : 2) : 1 })}>
+        {[t.step1, t.step2, t.step3, t.step4].map((s, i) => (
+          <li key={i} className={stepDone[i] ? 'done' : (i === 0 || stepDone[i - 1] ? 'current' : '')}>
+            <span className="stepnum">{i + 1}</span> {s}
+          </li>
+        ))}
+      </ol>
+
+      {tender && (
+        <div className="progress" role="status">
+          <div className="progress-top">
+            <span>{fill(t.progressOk, { ok: summary.okCount, total: requirements.length })}</span>
+            <span>{pct}%</span>
+          </div>
+          <div className="progress-track"><div className="progress-fill" style={{ width: pct + '%' }} /></div>
+        </div>
+      )}
+
       {error && <div className="msg err">{error}</div>}
       {notice && <div className="msg bad">{notice}</div>}
 
@@ -233,7 +285,7 @@ export default function App() {
           onDragLeave={() => setDragJson(false)}
           onDrop={(e) => { e.preventDefault(); setDragJson(false); if (e.dataTransfer.files[0]) loadJsonBlob(e.dataTransfer.files[0]); }}
         >
-          <h2>{t.loadJson}</h2>
+          <h2><span className="cardnum">1</span> {t.loadJson}</h2>
           <p className="help">{t.loadJsonHelp} {t.dropJson}</p>
           <button className="btn" onClick={() => jsonRef.current.click()} title={t.chooseJson}>{t.chooseJson}</button>
           <button className="btn secondary" onClick={onTryDemo} title={t.tryDemo}>{t.tryDemo}</button>
@@ -260,12 +312,15 @@ export default function App() {
           onDragLeave={() => setDragPdf(false)}
           onDrop={(e) => { e.preventDefault(); setDragPdf(false); if (tender) addPdfBlobs(e.dataTransfer.files); }}
         >
-          <h2>{t.upload}</h2>
+          <h2><span className="cardnum">2</span> {t.upload}</h2>
           <p className="help">{t.uploadHelp} ({files.length}/30, {formatBytes(totalBytes)}/50 MB) {t.dropPdfs}</p>
-          <button className="btn" disabled={!tender} onClick={() => pdfRef.current.click()} title={t.choosePdfs}>{t.choosePdfs}</button>
+          <button className="btn" disabled={!tender || hashing} onClick={() => pdfRef.current.click()} title={t.choosePdfs}>
+            {hashing ? t.hashing : t.choosePdfs}
+          </button>
           <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={onPdfFiles} />
-          {!tender && <p className="note">{t.loadJson}</p>}
-          {tender && files.length === 0 && <p className="note">{t.noFiles}</p>}
+          {!tender && <p className="note empty">{t.loadJson}</p>}
+          {tender && files.length === 0 && badFiles.length === 0 && !hashing && <p className="note empty">{t.noFiles}</p>}
+          {hashing && <p className="note busy"><span className="spinner" aria-hidden="true" /> {t.hashing}</p>}
           {files.length > 0 && (
             <ul className="filelist">
               {files.map((f) => (
@@ -281,13 +336,22 @@ export default function App() {
               ))}
             </ul>
           )}
+          {badFiles.length > 0 && (
+            <ul className="filelist badlist">
+              {badFiles.map((b, i) => (
+                <li key={i} className="badfile">
+                  <span><b>{b.name}</b> — <span className="badbadge">{badMsg(b)}</span></span>
+                  <button className="linkbtn" onClick={() => setBadFiles((prev) => prev.filter((_, j) => j !== i))} title={t.removeTitle} aria-label={`${t.removeTitle}: ${b.name}`}>{t.remove}</button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </div>
 
-
       {tender && (
         <section className="card">
-          <h2>{t.match}</h2>
+          <h2><span className="cardnum">3</span> {t.match}</h2>
           <p className="help">{t.matchHelp}</p>
           {blockers.length > 0 && (
             <div className="msg bad">
@@ -338,7 +402,7 @@ export default function App() {
 
       {tender && (
         <section className="card">
-          <h2>{t.status}</h2>
+          <h2><span className="cardnum">4</span> {t.status}</h2>
           <div className="summary">
             <span><b className="ok">{summary.okCount}</b> {t.ready}</span>
             <span><b className="bad">{summary.blockingCount}</b> {t.blocking}</span>
@@ -346,6 +410,7 @@ export default function App() {
           {summary.canDownload && <div className="msg good">{t.okMsg}</div>}
           {!summary.canDownload && <div className="msg bad">{t.blockedMsg}</div>}
           <button className="btn big" disabled={!summary.canDownload || building} onClick={onDownload} title={summary.canDownload ? t.generate : t.blockedMsg}>
+            {building && <span className="spinner light" aria-hidden="true" />}
             {building ? t.building : t.download}
           </button>
           {success && <div className="msg good">{success}</div>}

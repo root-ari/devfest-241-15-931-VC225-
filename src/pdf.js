@@ -6,18 +6,31 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-// Returns page count, throws if not a readable PDF.
+// Returns { ok:true, pages } or { ok:false, reason } — never throws.
+// reason is 'locked' (password-protected) or 'damaged' (corrupt/unreadable).
 export async function validatePdf(bytes) {
-  const task = pdfjs.getDocument({ data: bytes });
+  let doc = null;
+  try {
+    const task = pdfjs.getDocument({ data: bytes });
+    doc = await task.promise;
+    const pages = doc.numPages;
+    try { await doc.destroy(); } catch { /* ignore cleanup errors */ }
+    return { ok: true, pages };
+  } catch (err) {
+    try { if (doc && doc.destroy) await doc.destroy(); } catch { /* ignore */ }
+    const msg = String((err && (err.name || err.message)) || '');
+    const locked = /password|encrypt|NeedPassword|IncorrectPassword/i.test(msg);
+    return { ok: false, reason: locked ? 'locked' : 'damaged' };
+  }
+}
+
+// Count pages of an in-memory PDF (for the success message). Throws on bad input.
+export async function countPages(bytes) {
+  const task = pdfjs.getDocument({ data: bytes.slice ? bytes.slice() : bytes });
   const doc = await task.promise;
   const pages = doc.numPages;
   await doc.destroy();
   return pages;
-}
-
-// Count pages of an in-memory PDF (for the success message).
-export async function countPages(bytes) {
-  return validatePdf(bytes.slice ? bytes.slice() : bytes);
 }
 
 // items: [{ req, bytes, fileName, expiry }] in final order.
