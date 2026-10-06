@@ -226,7 +226,7 @@ export default function App() {
                     <label>{t.expiry}: <input type="date" value={m.expiry} onChange={(e) => setMatch(req.id, { expiry: e.target.value })} /></label>
                   )}
                 </div>
-                <div className={'chip ' + st}>{t.statuses[st]}</div>
+                <div className={'chip ' + st.replace(/([A-Z])/g, '-$1').toLowerCase()}>{t.statuses[st]}</div>
               </div>
             );
           })}

@@ -33,9 +33,9 @@ export const STR = {
     newTender: 'Start over',
     statuses: {
       missing: 'Missing — required file not attached',
-      'expiry-needed': 'Expiry date needed',
+      expiryNeeded: 'Expiry date needed',
       expired: 'Expired — date is before the deadline',
-      'not-provided': 'Not provided (optional)',
+      notProvided: 'Not provided (optional)',
       ok: 'OK',
     },
     errors: {
@@ -78,9 +78,9 @@ export const STR = {
     newTender: 'নতুন করে শুরু',
     statuses: {
       missing: 'অনুপস্থিত — প্রয়োজনীয় ফাইল যুক্ত হয়নি',
-      'expiry-needed': 'মেয়াদের তারিখ দরকার',
+      expiryNeeded: 'মেয়াদের তারিখ দরকার',
       expired: 'মেয়াদোত্তীর্ণ — তারিখ শেষ তারিখের আগে',
-      'not-provided': 'দেওয়া হয়নি (ঐচ্ছিক)',
+      notProvided: 'দেওয়া হয়নি (ঐচ্ছিক)',
       ok: 'ঠিক আছে',
     },
     errors: {
