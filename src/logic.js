@@ -316,7 +316,9 @@ export function suggestMatch(fileName, requirements, minScore = 0.35) {
 export function autoMatchAll(files, requirements, takenReqIds, minScore = 0.35) {
   const taken = new Set(takenReqIds || []);
   const cands = [];
+  const hashOf = new Map();
   for (const f of files || []) {
+    if (f && f.id && f.hash) hashOf.set(f.id, f.hash);
     for (const r of requirements || []) {
       if (taken.has(r.id)) continue;
       const s = scoreAutoMatch(f.name, r);
@@ -326,11 +328,15 @@ export function autoMatchAll(files, requirements, takenReqIds, minScore = 0.35) 
   cands.sort((a, b) => b.score - a.score || String(a.fileId).localeCompare(String(b.fileId)));
   const usedFiles = new Set();
   const usedReqs = new Set(taken);
+  const usedHashes = new Set();
   const picks = [];
   for (const c of cands) {
     if (usedFiles.has(c.fileId) || usedReqs.has(c.reqId)) continue;
+    const h = hashOf.get(c.fileId);
+    if (h && usedHashes.has(h)) continue; // same content, other name — one pick only
     usedFiles.add(c.fileId);
     usedReqs.add(c.reqId);
+    if (h) usedHashes.add(h);
     picks.push({ fileId: c.fileId, reqId: c.reqId, score: Math.round(c.score * 100) / 100 });
   }
   return picks.sort((a, b) => b.score - a.score);

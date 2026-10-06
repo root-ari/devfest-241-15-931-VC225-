@@ -118,5 +118,34 @@ eq('autoMatchAll tin matched', picks.some((p) => p.fileId === 'F3' && p.reqId ==
 const picks2 = autoMatchAll([{ id: 'F1', name: 'trade_license.pdf' }], REQS, ['R01']);
 eq('autoMatchAll skips taken', picks2.length, 0);
 
+// --- Duplicate content (same hash, different names) is only ever suggested once ---
+const sameHash = 'aa'.repeat(32);
+const crossPicks = autoMatchAll(
+  [
+    { id: 'X1', name: 'trade_license.pdf', hash: sameHash },
+    { id: 'X2', name: 'tin_certificate.pdf', hash: sameHash },
+  ],
+  REQS, []
+);
+eq('dup content: only one of two identically-hashed files suggested', crossPicks.length, 1);
+// Unique content is unaffected by hash dedupe.
+const uniqPicks = autoMatchAll(
+  [
+    { id: 'U1', name: 'trade_license.pdf', hash: 'aa'.repeat(32) },
+    { id: 'U2', name: 'tin_certificate.pdf', hash: 'bb'.repeat(32) },
+  ],
+  REQS, []
+);
+eq('unique content: both still suggested', uniqPicks.length, 2);
+// Files without hash fields behave exactly as before (no dedupe).
+const noHashPicks = autoMatchAll(
+  [
+    { id: 'N1', name: 'trade_license.pdf' },
+    { id: 'N2', name: 'tin_certificate.pdf' },
+  ],
+  REQS, []
+);
+eq('no hash: both suggested', noHashPicks.length, 2);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

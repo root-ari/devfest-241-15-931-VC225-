@@ -22,9 +22,9 @@ export default function App() {
   const [files, setFiles] = useState([]); // {id,name,size,bytes,pages,hash} — usable only
   const [badFiles, setBadFiles] = useState([]); // {name, kind} — rejected, never matchable
   const [matches, setMatches] = useState({}); // reqId -> {fileId, expiry}
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useState(null); // {err} or {check} — resolved at render for i18n
+  const [notice, setNotice] = useState(null); // {key, vars} — resolved at render for i18n
+  const [success, setSuccess] = useState(null); // {vars} — resolved at render for i18n
   const [building, setBuilding] = useState(false);
   const [hashing, setHashing] = useState(false);
   const [dragJson, setDragJson] = useState(false);
@@ -60,15 +60,24 @@ export default function App() {
     }
     return out;
   }, [files, dupMap]);
-  // Drop suggestions that became stale (file removed/matched, or req matched).
-  const visibleSuggestions = useMemo(
-    () => suggestions.filter((s) => {
+  // Drop suggestions that became stale (file removed/matched, or req matched),
+  // and ones that can no longer be confirmed (content duplicate of an
+  // already-matched file — the dup guard would reject them anyway).
+  const visibleSuggestions = useMemo(() => {
+    const matchedHashes = new Set();
+    for (const m of Object.values(matches)) {
+      const f = m && m.fileId ? fileById[m.fileId] : null;
+      if (f && f.hash) matchedHashes.add(f.hash);
+    }
+    return suggestions.filter((s) => {
       const req = requirements.find((r) => r.id === s.reqId);
       const m = matches[s.reqId];
-      return !!req && !!fileById[s.fileId] && !(m && m.fileId);
-    }),
-    [suggestions, requirements, matches, fileById]
-  );
+      const f = fileById[s.fileId];
+      if (!req || !f || (m && m.fileId)) return false;
+      if (matchedHashes.has(f.hash)) return false; // same content already used
+      return true;
+    });
+  }, [suggestions, requirements, matches, fileById]);
 
   function resetForTender(parsed) {
     setTender(parsed.tender);
@@ -78,16 +87,16 @@ export default function App() {
     setMatches({});
     setSuggestions([]);
     setAutoRan(false);
-    setError('');
-    setNotice('');
-    setSuccess('');
+    setError(null);
+    setNotice(null);
+    setSuccess(null);
   }
 
   async function loadJsonBlob(blob) {
     try {
       resetForTender(parseRequirements(await blob.text()));
     } catch (err) {
-      setError(msgFor(lang, err));
+      setError({ err });
     }
   }
 
@@ -98,25 +107,25 @@ export default function App() {
   }
 
   async function onTryDemo() {
-    setError('');
+    setError(null);
     try {
       const res = await fetch('sample-requirements.json');
       resetForTender(parseRequirements(await res.text()));
     } catch (err) {
-      setError(msgFor(lang, err));
+      setError({ err });
     }
   }
 
   async function addPdfBlobs(blobs) {
     const picked = Array.from(blobs || []);
     if (!picked.length) return;
-    setNotice('');
+    setNotice(null);
     const check = checkUploadLimits(files.length, totalBytes, picked);
     if (!check.ok) {
-      setError(limitMsg(lang, check));
+      setError({ check });
       return;
     }
-    setError('');
+    setError(null);
     setHashing(true);
     try {
       const added = [];
@@ -165,7 +174,9 @@ export default function App() {
   }
 
   async function onPdfFiles(e) {
-    const picked = e.target.files;
+    // Snapshot the FileList BEFORE clearing the input — it is live, so
+    // clearing first would empty it and silently drop the upload.
+    const picked = Array.from(e.target.files || []);
     e.target.value = '';
     await addPdfBlobs(picked);
   }
@@ -183,7 +194,7 @@ export default function App() {
     });
   }
   function pickFile(reqId, fileId) {
-    setNotice('');
+    setNotice(null);
     if (fileId) {
       const cand = files.find((f) => f.id === fileId);
       const candHash = cand && cand.hash;
@@ -191,7 +202,7 @@ export default function App() {
         if (k !== reqId && m && m.fileId && m.fileId !== fileId) {
           const other = files.find((f) => f.id === m.fileId);
           if (candHash && other && other.hash === candHash) {
-            setNotice(fill(t.dupBlockedNamed, { a: cand.name, b: other.name }));
+            setNotice({ key: 'dupBlockedNamed', vars: { a: cand.name, b: other.name } });
             return false; // rejected — keep any pending suggestion
           }
         }
@@ -209,7 +220,7 @@ export default function App() {
   }
 
   function clearMatch(reqId) {
-    setNotice('');
+    setNotice(null);
     setMatches((prev) => ({ ...prev, [reqId]: { fileId: '', expiry: '' } }));
   }
 
@@ -227,7 +238,7 @@ export default function App() {
     setSuggestions((prev) => prev.filter((x) => x !== s));
   }
   function runAutoMatch() {
-    setNotice('');
+    setNotice(null);
     const takenReq = requirements
       .filter((r) => matches[r.id] && matches[r.id].fileId)
       .map((r) => r.id);
@@ -240,8 +251,8 @@ export default function App() {
   async function onDownload() {
     if (!summary || !summary.canDownload || building) return;
     setBuilding(true);
-    setError('');
-    setSuccess('');
+    setError(null);
+    setSuccess(null);
     try {
       const items = [];
       for (const it of summary.items) {
@@ -252,9 +263,9 @@ export default function App() {
       const fname = buildFilename(tender.tender_id);
       downloadBytes(out, fname);
       const npages = await countPages(out);
-      setSuccess(fill(t.successMsg, { file: fname, pages: npages }));
+      setSuccess({ vars: { file: fname, pages: npages } });
     } catch (err) {
-      setError(msgFor(lang, err));
+      setError({ err });
     } finally {
       setBuilding(false);
     }
@@ -308,8 +319,12 @@ export default function App() {
         </div>
       )}
 
-      {error && <div className="msg err">{error}</div>}
-      {notice && <div className="msg bad">{notice}</div>}
+      {error && (
+        <div className="msg err">
+          {error.check ? limitMsg(lang, error.check) : msgFor(lang, error.err)}
+        </div>
+      )}
+      {notice && <div className="msg bad">{fill(t[notice.key], notice.vars)}</div>}
 
       <div className="cols">
         <section
@@ -481,7 +496,7 @@ export default function App() {
             {building && <span className="spinner light" aria-hidden="true" />}
             {building ? t.building : t.download}
           </button>
-          {success && <div className="msg good">{success}</div>}
+          {success && <div className="msg good">{fill(t.successMsg, success.vars)}</div>}
           <p className="note">{t.coverNote}</p>
           <p className="note">{t.fileName}: <b>{buildFilename(tender.tender_id)}</b></p>
           {unmatched.length > 0 && (
